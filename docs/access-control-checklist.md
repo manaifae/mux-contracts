@@ -17,6 +17,10 @@ not mapped to a documented authorization requirement fails the suite.
    material, JWTs, or webhook secrets.
 4. **Fail closed on writes.** If an authorization check cannot be evaluated
    (missing role, expired delegate, revoked guardian), the write is rejected.
+5. **Session scopes are enforced.** `execute_with_session` decodes the
+   payload's target contract/method and rejects the call unless the session
+   key's `scopes` explicitly authorize that target. Unauthorized targets fail
+   closed with `ScopeNotAllowed`; an empty scope list authorizes nothing.
 
 ## Mutating entrypoints and required authorization
 
@@ -39,6 +43,7 @@ not mapped to a documented authorization requirement fails the suite.
 | `set_delegate` | mux-account | owner |
 | `remove_delegate` | mux-account | owner |
 | `set_spend_limit` | mux-account | owner |
+| `execute_with_session` | mux-account | session key with matching scope |
 | `set_registry_metadata` | mux-batcher | owner |
 | `initialize` | mux-permissions | public (one-time init) |
 | `set_admin_threshold` | mux-permissions | owner |
