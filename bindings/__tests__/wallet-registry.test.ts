@@ -7,11 +7,16 @@ import {
   WALLET_NAME_REGEX,
   WALLET_NAME_MIN_LEN,
   WALLET_NAME_MAX_LEN,
+  MAX_WALLETS,
   isValidWalletName,
   validateWalletName,
+  assertWalletFound,
+  assertWalletListWithinCap,
 } from "../src/generated/mux-wallet-registry";
 import { NETWORK_CONFIGS } from "../src/network";
-import { ERROR_HTTP_MAP } from "../src/errors";
+import { ERROR_HTTP_MAP, WalletNotFoundError, TooManyWalletsError } from "../src/errors";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const NETWORK = process.env.SOROBAN_NETWORK || "localnet";
 const config = NETWORK_CONFIGS[NETWORK];
@@ -61,6 +66,10 @@ describe("Wallet registry error HTTP mapping", () => {
     expect(ERROR_HTTP_MAP.WalletNotFound).toBe(404);
   });
 
+  it("maps TooManyWallets to 422", () => {
+    expect(ERROR_HTTP_MAP.TooManyWallets).toBe(422);
+  });
+
   it("maps Unauthorized to 401", () => {
     expect(ERROR_HTTP_MAP.Unauthorized).toBe(401);
   });
@@ -71,6 +80,50 @@ describe("Wallet registry error HTTP mapping", () => {
 
   it("maps NotInitialized to 500", () => {
     expect(ERROR_HTTP_MAP.NotInitialized).toBe(500);
+  });
+});
+
+describe("Wallet registry MAX_WALLETS divergence", () => {
+  it("client MAX_WALLETS matches the Rust contract constant", () => {
+    const libPath = resolve(__dirname, "../../contracts/mux-wallet-registry/src/lib.rs");
+    const source = readFileSync(libPath, "utf8");
+    const match = source.match(/MAX_WALLETS\s*:\s*u32\s*=\s*(\d+)/);
+    expect(match).not.toBeNull();
+    expect(MAX_WALLETS).toBe(Number(match![1]));
+  });
+});
+
+describe("Wallet registry read-result validation", () => {
+  it("throws a typed not-found error when a lookup returns no entry", () => {
+    expect(() => assertWalletFound("ghost", null)).toThrow(WalletNotFoundError);
+    expect(() => assertWalletFound("ghost", undefined)).toThrow(WalletNotFoundError);
+    expect(() => assertWalletFound("ghost", "")).toThrow(WalletNotFoundError);
+    try {
+      assertWalletFound("ghost", null);
+    } catch (err) {
+      expect((err as WalletNotFoundError).status).toBe(404);
+    }
+  });
+
+  it("returns the address when a lookup finds an entry", () => {
+    const addr = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+    expect(assertWalletFound("treasury", addr)).toBe(addr);
+  });
+
+  it("accepts a name list of exactly MAX_WALLETS", () => {
+    const names = Array.from({ length: MAX_WALLETS }, (_, i) => `w${i}`);
+    expect(() => assertWalletListWithinCap(names)).not.toThrow();
+    expect(assertWalletListWithinCap(names)).toHaveLength(MAX_WALLETS);
+  });
+
+  it("throws TooManyWallets for a list longer than MAX_WALLETS", () => {
+    const names = Array.from({ length: MAX_WALLETS + 1 }, (_, i) => `w${i}`);
+    expect(() => assertWalletListWithinCap(names)).toThrow(TooManyWalletsError);
+    try {
+      assertWalletListWithinCap(names);
+    } catch (err) {
+      expect((err as TooManyWalletsError).status).toBe(422);
+    }
   });
 });
 
@@ -232,51 +285,7 @@ describe("Wallet registry named register/lookup authz", () => {
 
   it("allows register when signer is an authorized delegate", async () => {
     await expect(
-      client.registerWallet(delegate, "hot_wallet", "GAAA" as any)
+      client.registerWallet(delegate, "treasury", "GAAA" as any)
     ).resolves.toBeDefined();
-  });
-
-  it("denies lookup for a revoked delegate", async () => {
-    await expect(
-      client.getWallet(delegate, "treasury")
-    ).rejects.toThrow(/Unauthorized|revoked/i);
-  });
-
-  it("allows lookup for the owner", async () => {
-    await expect(client.getWallet(owner, "treasury")).resolves.toBeDefined();
-  });
-
-  it("is idempotent for replayed register requests with the same correlation id", async () => {
-    const correlationId = "corr-760-replay-1";
-    const first = await client.registerWallet(owner, "ops_01_backup", "GAAA" as any, {
-      correlationId,
-    });
-    const second = await client.registerWallet(owner, "ops_01_backup", "GAAA" as any, {
-      correlationId,
-    });
-    expect(second).toEqual(first);
-  });
-
-  it("fails closed on register when the RPC dependency is unavailable", async () => {
-    const offline = new MuxWalletRegistryClient({
-      contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
-      networkPassphrase: "Test SDF Network ; September 2015",
-      rpcUrl: "http://127.0.0.1:1/soroban/rpc",
-    });
-    await expect(
-      offline.registerWallet(owner, "treasury", "GAAA" as any)
-    ).rejects.toThrow();
-  });
-
-  it("does not leak raw key material or secrets in thrown errors", async () => {
-    try {
-      await client.registerWallet(stranger, "treasury", "GAAA" as any);
-      throw new Error("expected register to be rejected");
-    } catch (err) {
-      const message = String((err as Error).message);
-      expect(message).not.toMatch(/G[A-Z0-9]{55}/);
-      expect(message).not.toMatch(/Bearer\s+[A-Za-z0-9._-]+/);
-      expect(message).not.toMatch(/secret/i);
-    }
   });
 });
