@@ -54,3 +54,7 @@ path = "session_auth_doc_coverage.rs"
 [[test]]
 name = "expiry_naming"
 path = "expiry_naming.rs"
+
+[[test]]
+name = "test_helpers_isolation"
+path = "test_helpers_isolation.rs"

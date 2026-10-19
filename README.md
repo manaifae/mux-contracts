@@ -450,3 +450,8 @@ See [`SECURITY.md`](SECURITY.md) for the threat model, secret-handling rules, an
 ## License
 
 Apache-2.0
+
+## Handsoff notes
+
+<!-- handsoff-issue-972 -->
+- #972: mux-account: add Rust tests for the delegate-count cap and the spend-limit enforcement path
